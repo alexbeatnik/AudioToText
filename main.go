@@ -50,11 +50,7 @@ func main() {
 
 	modelSelect := widget.NewSelect(nil, nil)
 	refreshModels := func() {
-		models := scanModels()
-		names := make([]string, 0, len(models))
-		for _, m := range models {
-			names = append(names, m)
-		}
+		names := scanModels()
 		modelSelect.Options = names
 		modelSelect.Refresh()
 		if modelPath != "" {
@@ -181,7 +177,7 @@ func main() {
 	transcribeBtn.Importance = widget.HighImportance
 
 	copyBtn := widget.NewButton("Copy", func() {
-		w.Clipboard().SetContent(editor.Text)
+		a.Clipboard().SetContent(editor.Text)
 		status.SetText("Copied to clipboard.")
 	})
 

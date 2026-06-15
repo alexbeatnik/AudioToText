@@ -93,8 +93,8 @@ func Transcribe(ctx context.Context, binary, modelPath, audioPath, language stri
 		"-m", modelPath,
 		"-f", audioPath,
 		"-l", language,
-		"-nt",    // no timestamps in the output
-		"-otxt",  // write a .txt transcript
+		"-nt",   // no timestamps in the output
+		"-otxt", // write a .txt transcript
 		"-of", base,
 	)
 	var stderr bytes.Buffer
@@ -130,10 +130,10 @@ func convertToWav(ctx context.Context, srcPath string) (string, error) {
 	tmp.Close()
 
 	cmd := exec.CommandContext(ctx, ffmpeg,
-		"-y",            // overwrite the temp file
-		"-i", srcPath,   // input
-		"-ac", "1",      // mono
-		"-ar", "16000",  // 16 kHz
+		"-y",          // overwrite the temp file
+		"-i", srcPath, // input
+		"-ac", "1", // mono
+		"-ar", "16000", // 16 kHz
 		"-c:a", "pcm_s16le",
 		dst,
 	)
