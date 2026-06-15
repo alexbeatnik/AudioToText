@@ -77,15 +77,17 @@ func Transcribe(ctx context.Context, binary, modelPath, audioPath, language stri
 	}
 
 	// whisper-cli writes <of>.txt; use a temp base so we never touch the
-	// directory of the user's source file.
-	tmp, err := os.CreateTemp("", "a2t-*")
+	// directory of the user's source file. We reserve the .txt path itself with
+	// CreateTemp (O_EXCL) and let whisper-cli overwrite that file, rather than
+	// removing it first — that would leave a window for a symlink/TOCTOU race
+	// on the predictable name in a world-writable temp dir.
+	tmp, err := os.CreateTemp("", "a2t-*.txt")
 	if err != nil {
 		return "", err
 	}
-	base := tmp.Name()
+	txtPath := tmp.Name()
 	tmp.Close()
-	os.Remove(base)
-	txtPath := base + ".txt"
+	base := strings.TrimSuffix(txtPath, ".txt")
 	defer os.Remove(txtPath)
 
 	cmd := exec.CommandContext(ctx,

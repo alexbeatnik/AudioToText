@@ -51,6 +51,14 @@ func main() {
 	modelSelect := widget.NewSelect(nil, nil)
 	refreshModels := func() {
 		names := scanModels()
+		// Keep a custom (browsed) model selectable across runs: scanModels only
+		// looks in the cache dirs, so a model from elsewhere would otherwise
+		// vanish from the drop-down even though its path is still valid.
+		if modelPath != "" && !contains(names, modelPath) {
+			if _, err := os.Stat(modelPath); err == nil {
+				names = append(names, modelPath)
+			}
+		}
 		modelSelect.Options = names
 		modelSelect.Refresh()
 		if modelPath != "" {
@@ -78,6 +86,9 @@ func main() {
 	status := widget.NewLabel("")
 
 	var transcribeBtn *widget.Button
+	// Declared up front so runTranscription can restore the button's default
+	// action (it temporarily becomes a "Cancel" button while running).
+	var runTranscription func()
 
 	// --- actions ---
 	chooseFile := func() {
@@ -122,7 +133,24 @@ func main() {
 		}
 	}
 
-	runTranscription := func() {
+	// Named so they can be disabled while a transcription is running — this,
+	// together with snapshotting audioPath/modelPath below, prevents the user
+	// from mutating the config the background goroutine is reading (data race).
+	selectAudioBtn := widget.NewButton("Select audio", chooseFile)
+	browseBtn := widget.NewButton("Browse…", chooseModel)
+	downloadBtn := widget.NewButton("Download Whisper", downloadWhisper)
+
+	setInputsEnabled := func(enabled bool) {
+		for _, c := range []fyne.Disableable{selectAudioBtn, browseBtn, downloadBtn, modelSelect, langSelect} {
+			if enabled {
+				c.Enable()
+			} else {
+				c.Disable()
+			}
+		}
+	}
+
+	runTranscription = func() {
 		if audioPath == "" {
 			dialog.ShowInformation("No file", "Select an audio file first.", w)
 			return
@@ -131,10 +159,38 @@ func main() {
 			dialog.ShowInformation("No model", "Select a whisper model (.bin).", w)
 			return
 		}
-		transcribeBtn.Disable()
-		progress.Show()
+
+		// Snapshot the config so the worker reads stable values even though the
+		// UI is only partially locked.
+		mPath := modelPath
+		aPath := audioPath
 		lang := langSelect.Selected
+
+		ctx, cancel := context.WithCancel(context.Background())
 		start := time.Now()
+
+		// Switch the UI into "running" mode: lock the inputs and turn the
+		// Transcribe button into a Cancel button that aborts whisper-cli.
+		setInputsEnabled(false)
+		progress.Show()
+		transcribeBtn.SetText("Cancel")
+		transcribeBtn.Importance = widget.DangerImportance
+		transcribeBtn.OnTapped = func() {
+			cancel()
+			transcribeBtn.Disable()
+			status.SetText("Canceling…")
+		}
+		transcribeBtn.Refresh()
+
+		restoreUI := func() {
+			progress.Hide()
+			setInputsEnabled(true)
+			transcribeBtn.SetText("Transcribe")
+			transcribeBtn.Importance = widget.HighImportance
+			transcribeBtn.OnTapped = runTranscription
+			transcribeBtn.Enable()
+			transcribeBtn.Refresh()
+		}
 
 		// Live timer: refresh the status every second while recognition runs.
 		done := make(chan struct{})
@@ -148,7 +204,9 @@ func main() {
 				case <-ticker.C:
 					elapsed := time.Since(start)
 					fyne.Do(func() {
-						status.SetText(fmt.Sprintf("Transcribing… %s", fmtDuration(elapsed)))
+						if status.Text != "Canceling…" {
+							status.SetText(fmt.Sprintf("Transcribing… %s", fmtDuration(elapsed)))
+						}
 					})
 				}
 			}
@@ -156,13 +214,17 @@ func main() {
 		status.SetText("Transcribing… 0s")
 
 		go func() {
-			text, err := Transcribe(context.Background(), "", modelPath, audioPath, lang)
+			text, err := Transcribe(ctx, "", mPath, aPath, lang)
 			close(done)
+			cancel() // release the context regardless of outcome
 			elapsed := time.Since(start)
 			fyne.Do(func() {
-				progress.Hide()
-				transcribeBtn.Enable()
+				restoreUI()
 				if err != nil {
+					if ctx.Err() != nil {
+						status.SetText("Canceled.")
+						return
+					}
 					status.SetText("Error.")
 					dialog.ShowError(err, w)
 					return
@@ -206,11 +268,11 @@ func main() {
 
 	// --- layout ---
 	topControls := container.NewVBox(
-		container.NewBorder(nil, nil, widget.NewButton("Select audio", chooseFile), nil, fileLabel),
+		container.NewBorder(nil, nil, selectAudioBtn, nil, fileLabel),
 		container.NewBorder(nil, nil, widget.NewLabel("Model:"),
 			container.NewHBox(
-				widget.NewButton("Browse…", chooseModel),
-				widget.NewButton("Download Whisper", downloadWhisper),
+				browseBtn,
+				downloadBtn,
 			), modelSelect),
 		container.NewBorder(nil, nil, widget.NewLabel("Language:"), nil, langSelect),
 		transcribeBtn,
